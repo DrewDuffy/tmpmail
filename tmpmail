@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+BASE_URL="https://api.mail.tm"
+
+cleanup(){
+	echo $'\e[?25h'
+}
+get_domains(){
+	domain=$(curl -sS "${BASE_URL}/domains"| jq -r '."hydra:member"[0].domain')
+	create_email
+}
+
+create_email() {
+	local USER PW
+	USER="$(tr -dc '[:alnum:]' < /dev/urandom | head -c 8)"	
+	PW="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24)"
+	curl -s -X POST ${BASE_URL}/accounts \
+		-H "Content-Type: application/json" -d "{\"address\":\"${USER,,}@${domain}\",\"password\":\"${PW}\"}" > /dev/null
+	TOKEN=$(curl -s -X POST ${BASE_URL}/token -H "Content-Type: application/json" -d "{\"address\":\"${USER,,}@${domain}\",\"password\":\"${PW}\"}" | jq '.token')
+	echo "Your temporary email is ${USER,,}@${domain}"
+	read_inbox
+}
+
+read_inbox(){
+	echo "checking email periodically..."
+	#Check email every 5 seconds until the user exits
+	trap cleanup EXIT
+	echo $'\e[?25l'
+	while true; do
+		while read -r messages; do
+			sleep 5
+			while IFS='|' read -r fromaddr subj body; do
+				printf "From: %s | Subject: %s | Body: %s\r" "$fromaddr" "$subj" "$body"
+			done <<< "$messages"
+		done < <(curl -s ${BASE_URL}/messages -H "Authorization: Bearer ${TOKEN//\"/}" | jq -r '."hydra:member"[] | [ .from.address, .subject, .intro] | join("|")')
+	done
+}
+get_domains
